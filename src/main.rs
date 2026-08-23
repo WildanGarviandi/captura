@@ -1,5 +1,6 @@
 use iced::widget::{button, column, container, pick_list, row, rule, text, text_input, Space};
 use iced::{Alignment, Element, Length, Task, Theme};
+use notify_rust::Notification;
 use std::process::Child;
 
 // ── Codec ────────────────────────────────────────────────────────────────────
@@ -133,6 +134,7 @@ enum Message {
     SelectRegion,
     RegionSelected(Result<String, String>),
     ToggleRecording,
+    StopRecordingFromNotification,
     InstallSlurp,
     SlurpInstalled(Result<(), String>),
 }
@@ -240,6 +242,10 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                 }
                 app.is_recording = false;
                 app.status = "Recording stopped".to_string();
+                let _ = Notification::new()
+                    .summary("Captura")
+                    .body("Recording stopped.")
+                    .show();
             } else {
                 let path = format!(
                     "{}/{}.{}",
@@ -259,16 +265,81 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                         app.recording_process = Some(child);
                         app.is_recording = true;
                         app.status = format!("Recording → {}", path);
+                        
+                        // Spawn a notification with a "Stop Recording" action button.
+                        std::thread::spawn(move || {
+                            let mut notification = Notification::new();
+                            notification
+                                .summary("Captura - Recording Active")
+                                .body("Click 'Stop' or the notification to stop recording.")
+                                .icon("media-record")
+                                .appname("Captura")
+                                .timeout(notify_rust::Timeout::Never);
+
+                            notification.action("stop", "Stop Recording");
+
+                            let handle = notification.show();
+                            if let Ok(nh) = handle {
+                                nh.wait_for_action(|action| {
+                                    if action == "default" || action == "stop" {
+                                        // Use pkill to stop wf-recorder
+                                        let _ = std::process::Command::new("pkill")
+                                            .arg("-INT")
+                                            .arg("wf-recorder")
+                                            .status();
+                                    }
+                                });
+                            }
+                        });
                     }
                     Err(e) => app.status = format!("Failed to start wf-recorder: {}", e),
                 }
             }
             Task::none()
         }
+        Message::StopRecordingFromNotification => {
+            if app.is_recording {
+                if let Some(mut child) = app.recording_process.take() {
+                    let pid = child.id();
+                    std::thread::spawn(move || {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-INT", &pid.to_string()])
+                            .status();
+                        let _ = child.wait();
+                    });
+                }
+                app.is_recording = false;
+                app.status = "Recording stopped from notification".to_string();
+                let _ = Notification::new()
+                    .summary("Captura")
+                    .body("Recording stopped.")
+                    .show();
+            }
+            Task::none()
+        }
         Message::InstallSlurp => Task::perform(
             async {
+                // A distro-agnostic script that detects the package manager and installs slurp
+                let script = r#"
+                if command -v pacman >/dev/null 2>&1; then
+                    pacman -S --noconfirm slurp
+                elif command -v dnf >/dev/null 2>&1; then
+                    dnf install -y slurp
+                elif command -v apt-get >/dev/null 2>&1; then
+                    apt-get update && apt-get install -y slurp
+                elif command -v zypper >/dev/null 2>&1; then
+                    zypper install -y slurp
+                elif command -v apk >/dev/null 2>&1; then
+                    apk add slurp
+                else
+                    exit 1
+                fi
+                "#;
+
                 tokio::process::Command::new("pkexec")
-                    .args(["apt", "install", "-y", "slurp"])
+                    .arg("sh")
+                    .arg("-c")
+                    .arg(script)
                     .status()
                     .await
                     .map_err(|e| e.to_string())
@@ -276,7 +347,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                         if s.success() {
                             Ok(())
                         } else {
-                            Err("apt install returned non-zero".to_string())
+                            Err("Installation failed or unsupported package manager".to_string())
                         }
                     })
             },
