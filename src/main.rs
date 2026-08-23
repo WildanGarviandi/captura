@@ -2,6 +2,8 @@ use iced::widget::{button, column, container, pick_list, row, rule, text, text_i
 use iced::{Alignment, Element, Length, Task, Theme};
 use notify_rust::Notification;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // ── Codec ────────────────────────────────────────────────────────────────────
 
@@ -87,12 +89,13 @@ struct App {
     wf_recorder_installed: bool,
     recording_process: Option<Child>,
     status: String,
+    /// Shared flag: set by the notification thread when user clicks Stop.
+    notification_stop_flag: Option<Arc<AtomicBool>>,
 }
 
 impl Default for App {
     fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        // Ensure ~/Videos exists
         let videos = format!("{}/Videos", home);
         let _ = std::fs::create_dir_all(&videos);
 
@@ -108,6 +111,7 @@ impl Default for App {
             wf_recorder_installed: cmd_exists("wf-recorder"),
             recording_process: None,
             status: "Ready".to_string(),
+            notification_stop_flag: None,
         }
     }
 }
@@ -134,9 +138,11 @@ enum Message {
     SelectRegion,
     RegionSelected(Result<String, String>),
     ToggleRecording,
-    StopRecordingFromNotification,
     InstallSlurp,
     SlurpInstalled(Result<(), String>),
+    /// Fired every ~500ms by a subscription to check if the notification
+    /// stop button was clicked.
+    Tick,
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -146,6 +152,10 @@ fn main() -> iced::Result {
         .title("wf-recorder GUI")
         .theme(app_theme)
         .window_size((640.0, 400.0))
+        .subscription(|_| {
+            // We use a simple timer subscription to poll the stop flag.
+            iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::Tick)
+        })
         .run()
 }
 
@@ -186,7 +196,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CodecSelected(codec) => {
-            // Auto-switch to WebM for VP8/VP9
             if matches!(codec, Codec::VP8 | Codec::VP9) {
                 app.format = Format::WebM;
             } else if app.format == Format::WebM {
@@ -228,19 +237,24 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::Tick => {
+            // Check if the notification thread set the stop flag.
+            if let Some(flag) = &app.notification_stop_flag {
+                if flag.load(Ordering::Relaxed) {
+                    // Reset the flag
+                    flag.store(false, Ordering::Relaxed);
+                    // Stop the recording
+                    if app.is_recording {
+                        stop_recording(app);
+                        app.status = "Recording stopped from notification".to_string();
+                    }
+                }
+            }
+            Task::none()
+        }
         Message::ToggleRecording => {
             if app.is_recording {
-                // Stop: send SIGINT and wait in background thread
-                if let Some(mut child) = app.recording_process.take() {
-                    let pid = child.id();
-                    std::thread::spawn(move || {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-INT", &pid.to_string()])
-                            .status();
-                        let _ = child.wait();
-                    });
-                }
-                app.is_recording = false;
+                stop_recording(app);
                 app.status = "Recording stopped".to_string();
                 let _ = Notification::new()
                     .summary("Captura")
@@ -265,8 +279,12 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                         app.recording_process = Some(child);
                         app.is_recording = true;
                         app.status = format!("Recording → {}", path);
-                        
-                        // Spawn a notification with a "Stop Recording" action button.
+
+                        // Create a shared stop flag for the notification thread.
+                        let stop_flag = Arc::new(AtomicBool::new(false));
+                        app.notification_stop_flag = Some(stop_flag.clone());
+
+                        // Spawn notification with a "Stop" action button.
                         std::thread::spawn(move || {
                             let mut notification = Notification::new();
                             notification
@@ -282,11 +300,13 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                             if let Ok(nh) = handle {
                                 nh.wait_for_action(|action| {
                                     if action == "default" || action == "stop" {
-                                        // Use pkill to stop wf-recorder
+                                        // Kill wf-recorder
                                         let _ = std::process::Command::new("pkill")
                                             .arg("-INT")
                                             .arg("wf-recorder")
                                             .status();
+                                        // Signal the main thread to update GUI state
+                                        stop_flag.store(true, Ordering::Relaxed);
                                     }
                                 });
                             }
@@ -297,29 +317,8 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::StopRecordingFromNotification => {
-            if app.is_recording {
-                if let Some(mut child) = app.recording_process.take() {
-                    let pid = child.id();
-                    std::thread::spawn(move || {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-INT", &pid.to_string()])
-                            .status();
-                        let _ = child.wait();
-                    });
-                }
-                app.is_recording = false;
-                app.status = "Recording stopped from notification".to_string();
-                let _ = Notification::new()
-                    .summary("Captura")
-                    .body("Recording stopped.")
-                    .show();
-            }
-            Task::none()
-        }
         Message::InstallSlurp => Task::perform(
             async {
-                // A distro-agnostic script that detects the package manager and installs slurp
                 let script = r#"
                 if command -v pacman >/dev/null 2>&1; then
                     pacman -S --noconfirm slurp
@@ -366,10 +365,24 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
     }
 }
 
+/// Kill the recording process and clean up state.
+fn stop_recording(app: &mut App) {
+    if let Some(mut child) = app.recording_process.take() {
+        let pid = child.id();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("kill")
+                .args(["-INT", &pid.to_string()])
+                .status();
+            let _ = child.wait();
+        });
+    }
+    app.is_recording = false;
+    app.notification_stop_flag = None;
+}
+
 // ── View ─────────────────────────────────────────────────────────────────────
 
 fn view(app: &App) -> Element<'_, Message> {
-    // ── wf-recorder missing warning ──
     let wf_warning: Option<Element<Message>> = if !app.wf_recorder_installed {
         Some(
             text("⚠  wf-recorder not installed: sudo apt install wf-recorder")
@@ -380,7 +393,6 @@ fn view(app: &App) -> Element<'_, Message> {
         None
     };
 
-    // ── Output path ──
     let path_row = row![
         text("Save to:").width(90),
         text_input("/home/…/Videos", &app.output_dir)
@@ -401,7 +413,6 @@ fn view(app: &App) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    // ── Settings ──
     let settings_row = row![
         text("FPS:"),
         pick_list(FPS_OPTIONS, Some(app.fps), Message::FpsSelected).width(75),
@@ -415,7 +426,6 @@ fn view(app: &App) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    // ── Region ──
     let region_row: Element<Message> = if app.slurp_installed {
         let btn_label = if app.region.is_some() {
             "↺ Re-select Region"
@@ -446,14 +456,12 @@ fn view(app: &App) -> Element<'_, Message> {
         .into()
     };
 
-    // ── Record button ──
     let record_btn = if app.is_recording {
         button("■  Stop Recording").on_press(Message::ToggleRecording)
     } else {
         button("⏺  Start Recording").on_press(Message::ToggleRecording)
     };
 
-    // ── Layout ──
     let mut layout = column![
         text("wf-recorder GUI").size(22),
         Space::new().height(6),
