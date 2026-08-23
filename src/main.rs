@@ -1,9 +1,13 @@
-use iced::widget::{button, column, container, pick_list, row, rule, text, text_input, Space};
-use iced::{Alignment, Element, Length, Task, Theme};
+use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
+use iced::widget::{Space, button, column, container, pick_list, row, rule, text, text_input};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Shadow,
+    Size, Task, Theme, Vector, mouse,
+};
 use notify_rust::Notification;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // ── Codec ────────────────────────────────────────────────────────────────────
 
@@ -145,6 +149,227 @@ enum Message {
     Tick,
 }
 
+// ── Button Style ─────────────────────────────────────────────────────────────────────
+
+struct RecordIcon {
+    is_recording: bool,
+}
+
+impl<Message> canvas::Program<Message> for RecordIcon {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let center = frame.center();
+
+        if self.is_recording {
+            let side = 12.0;
+            let top_left = Point::new(center.x - side / 2.0, center.y - side / 2.0);
+            let square = Path::rounded_rectangle(top_left, Size::new(side, side), 4.0.into());
+            frame.fill(&square, Color::WHITE);
+        } else {
+            let circle = Path::circle(center, 7.0);
+            frame.fill(&circle, Color::from_rgb(0.86, 0.16, 0.16));
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+fn record_button_style(is_recording: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme: &Theme, status: button::Status| {
+        let base = if is_recording {
+            Color::from_rgb(0.86, 0.16, 0.16) // red while actively recording
+        } else {
+            Color::from_rgb(0.18, 0.18, 0.20) // dark neutral when idle
+        };
+
+        let background = match status {
+            button::Status::Hovered => shade(base, 0.08),
+            button::Status::Pressed => shade(base, -0.08),
+            button::Status::Disabled => shade(base, -0.15),
+            button::Status::Active => base,
+        };
+
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: Color::WHITE,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 24.0.into(),
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 6.0,
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
+fn shade(c: Color, amount: f32) -> Color {
+    Color::from_rgb(
+        (c.r + amount).clamp(0.0, 1.0),
+        (c.g + amount).clamp(0.0, 1.0),
+        (c.b + amount).clamp(0.0, 1.0),
+    )
+}
+
+// --- Icons ---------------------------------------------------------------
+
+struct RegionIcon {
+    selected: bool,
+}
+
+impl<Message> canvas::Program<Message> for RegionIcon {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let size = bounds.width.min(bounds.height);
+        let pad = size * 0.12;
+        let arm = size * 0.32;
+
+        let color = if self.selected {
+            Color::from_rgb(0.30, 0.55, 0.95)
+        } else {
+            Color::from_rgb(0.55, 0.55, 0.58)
+        };
+
+        // (corner point, direction the two arms point in)
+        let corners = [
+            (Point::new(pad, pad), 1.0, 1.0),
+            (Point::new(size - pad, pad), -1.0, 1.0),
+            (Point::new(pad, size - pad), 1.0, -1.0),
+            (Point::new(size - pad, size - pad), -1.0, -1.0),
+        ];
+
+        for (corner, hx, vy) in corners {
+            let bracket = Path::new(|builder| {
+                builder.move_to(Point::new(corner.x + arm * hx, corner.y));
+                builder.line_to(corner);
+                builder.line_to(Point::new(corner.x, corner.y + arm * vy));
+            });
+            frame.stroke(
+                &bracket,
+                Stroke {
+                    width: 1.6,
+                    style: canvas::stroke::Style::Solid(color),
+                    ..Stroke::default()
+                },
+            );
+        }
+
+        if self.selected {
+            frame.fill(&Path::circle(frame.center(), size * 0.06), color);
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+struct WarningIcon;
+
+impl<Message> canvas::Program<Message> for WarningIcon {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let size = bounds.width.min(bounds.height);
+        let pad = size * 0.08;
+        let ink = Color::from_rgb(0.20, 0.14, 0.02);
+
+        let triangle = Path::new(|builder| {
+            builder.move_to(Point::new(size / 2.0, pad));
+            builder.line_to(Point::new(size - pad, size - pad));
+            builder.line_to(Point::new(pad, size - pad));
+            builder.close();
+        });
+        frame.fill(&triangle, Color::from_rgb(0.95, 0.62, 0.12));
+
+        let stem = Path::rounded_rectangle(
+            Point::new(size / 2.0 - 0.8, size * 0.38),
+            Size::new(1.6, size * 0.28),
+            1.0.into(),
+        );
+        frame.fill(&stem, ink);
+        frame.fill(&Path::circle(Point::new(size / 2.0, size * 0.76), 1.2), ink);
+
+        vec![frame.into_geometry()]
+    }
+}
+
+// --- Button styles ---------------------------------------------------------
+
+fn secondary_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
+    |_theme: &Theme, status: button::Status| {
+        let base = Color::from_rgb(0.16, 0.16, 0.18);
+        let background = match status {
+            button::Status::Hovered => shade(base, 0.06),
+            button::Status::Pressed => shade(base, -0.06),
+            button::Status::Disabled => shade(base, -0.12),
+            button::Status::Active => base,
+        };
+
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: Color::WHITE,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 10.0.into(),
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
+fn warning_button_style() -> impl Fn(&Theme, button::Status) -> button::Style {
+    |_theme: &Theme, status: button::Status| {
+        let base = Color::from_rgb(0.85, 0.55, 0.10);
+        let background = match status {
+            button::Status::Hovered => shade(base, 0.06),
+            button::Status::Pressed => shade(base, -0.06),
+            button::Status::Disabled => shade(base, -0.12),
+            button::Status::Active => base,
+        };
+
+        button::Style {
+            background: Some(Background::Color(background)),
+            text_color: Color::WHITE,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 10.0.into(),
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 fn main() -> iced::Result {
@@ -261,12 +486,7 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
                     .body("Recording stopped.")
                     .show();
             } else {
-                let path = format!(
-                    "{}/{}.{}",
-                    app.output_dir,
-                    app.filename,
-                    app.format.ext()
-                );
+                let path = format!("{}/{}.{}", app.output_dir, app.filename, app.format.ext());
                 let mut cmd = std::process::Command::new("wf-recorder");
                 cmd.arg("-f").arg(&path);
                 cmd.arg("-r").arg(app.fps.to_string());
@@ -421,19 +641,67 @@ fn view(app: &App) -> Element<'_, Message> {
         pick_list(Codec::ALL, Some(app.codec.clone()), Message::CodecSelected).width(150),
         Space::new().width(12),
         text("Format:"),
-        pick_list(Format::ALL, Some(app.format.clone()), Message::FormatSelected).width(130),
+        pick_list(
+            Format::ALL,
+            Some(app.format.clone()),
+            Message::FormatSelected
+        )
+        .width(130),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
+    // let region_row: Element<Message> = if app.slurp_installed {
+    //     let btn_label = if app.region.is_some() {
+    //         "↺ Re-select Region"
+    //     } else {
+    //         "⬚ Select Region"
+    //     };
+    //     row![
+    //         button(btn_label).on_press(Message::SelectRegion),
+    //         Space::new().width(8),
+    //         text(
+    //             app.region
+    //                 .as_deref()
+    //                 .unwrap_or("Full screen (no region selected)")
+    //         )
+    //         .size(13),
+    //     ]
+    //     .spacing(4)
+    //     .align_y(Alignment::Center)
+    //     .into()
+    // } else {
+    //     row![
+    //         text("⚠  slurp not found — region selection unavailable").size(13),
+    //         Space::new().width(12),
+    //         button("Install slurp").on_press(Message::InstallSlurp),
+    //     ]
+    //     .spacing(8)
+    //     .align_y(Alignment::Center)
+    //     .into()
+    // };
     let region_row: Element<Message> = if app.slurp_installed {
+        let icon = Canvas::new(RegionIcon {
+            selected: app.region.is_some(),
+        })
+        .width(16)
+        .height(16);
+
         let btn_label = if app.region.is_some() {
-            "↺ Re-select Region"
+            "Re-select Region"
         } else {
-            "⬚ Select Region"
+            "Select Region"
         };
+
         row![
-            button(btn_label).on_press(Message::SelectRegion),
+            button(
+                row![icon, text(btn_label)]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+            )
+            .padding([8, 16])
+            .style(secondary_button_style())
+            .on_press(Message::SelectRegion),
             Space::new().width(8),
             text(
                 app.region
@@ -446,20 +714,47 @@ fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center)
         .into()
     } else {
+        let icon = Canvas::new(WarningIcon).width(16).height(16);
+
         row![
-            text("⚠  slurp not found — region selection unavailable").size(13),
+            row![
+                icon,
+                text("slurp not found — region selection unavailable").size(13)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
             Space::new().width(12),
-            button("Install slurp").on_press(Message::InstallSlurp),
+            button("Install slurp")
+                .padding([8, 16])
+                .style(warning_button_style())
+                .on_press(Message::InstallSlurp),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
         .into()
     };
 
-    let record_btn = if app.is_recording {
-        button("■  Stop Recording").on_press(Message::ToggleRecording)
-    } else {
-        button("⏺  Start Recording").on_press(Message::ToggleRecording)
+    let record_btn = {
+        let icon = Canvas::new(RecordIcon {
+            is_recording: app.is_recording,
+        })
+        .width(16)
+        .height(16);
+
+        let label = if app.is_recording {
+            "Stop Recording"
+        } else {
+            "Start Recording"
+        };
+
+        button(
+            row![icon, text(label)]
+                .spacing(10)
+                .align_y(Alignment::Center),
+        )
+        .padding([10, 20])
+        .style(record_button_style(app.is_recording))
+        .on_press(Message::ToggleRecording)
     };
 
     let mut layout = column![
