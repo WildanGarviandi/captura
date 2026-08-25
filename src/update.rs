@@ -100,37 +100,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::ToggleRecording => {
-            if app.is_recording {
-                stop_recording(app);
-                app.status = "Recording stopped".to_string();
-                let _ = Notification::new()
-                    .summary("Captura")
-                    .body("Recording stopped.")
-                    .show();
-            } else {
-                let started = recorder::start(
-                    &app.output_dir,
-                    &app.filename,
-                    &app.format,
-                    app.fps,
-                    &app.codec,
-                    &app.region,
-                );
-                match started {
-                    Ok(recorder::RecordingStarted { process, stop_flag }) => {
-                        app.recording_process = Some(process);
-                        app.is_recording = true;
-                        app.status = format!(
-                            "Recording → {}",
-                            recorder::output_path(&app.output_dir, &app.filename, &app.format)
-                        );
-                        app.notification_stop_flag = Some(stop_flag);
-                    }
-                    Err(e) => app.status = e,
-                }
-            }
-            Task::none()
+        Message::ToggleRecording => toggle_recording(app),
+        Message::FullScreen => {
+            // Clear region for full screen recording and reuse the toggle logic
+            app.region = None;
+            toggle_recording(app)
         }
         Message::InstallSlurp => Task::perform(deps::install_slurp(), Message::SlurpInstalled),
         Message::SlurpInstalled(result) => {
@@ -144,6 +118,40 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+/// Start or stop a recording, mirroring the `ToggleRecording` button behavior.
+fn toggle_recording(app: &mut App) -> Task<Message> {
+    if app.is_recording {
+        stop_recording(app);
+        app.status = "Recording stopped".to_string();
+        let _ = Notification::new()
+            .summary("Captura")
+            .body("Recording stopped.")
+            .show();
+    } else {
+        let started = recorder::start(
+            &app.output_dir,
+            &app.filename,
+            &app.format,
+            app.fps,
+            &app.codec,
+            &app.region,
+        );
+        match started {
+            Ok(recorder::RecordingStarted { process, stop_flag }) => {
+                app.recording_process = Some(process);
+                app.is_recording = true;
+                app.status = format!(
+                    "Recording → {}",
+                    recorder::output_path(&app.output_dir, &app.filename, &app.format)
+                );
+                app.notification_stop_flag = Some(stop_flag);
+            }
+            Err(e) => app.status = e,
+        }
+    }
+    Task::none()
 }
 
 /// Kill the recording process and clean up state.
