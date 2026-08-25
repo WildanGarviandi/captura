@@ -2,6 +2,8 @@
 
 A wrapper to wf-recorder to do screen capturing utility written in Rust gui using [iced](https://github.com/iced-rs/iced).
 
+<img src="docs/images/product1.png" width="400" height="200">
+
 ## How to Run
 
 To run Captura, you'll need to have Rust and Cargo installed.
