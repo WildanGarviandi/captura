@@ -87,6 +87,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
                     .unwrap_or("Full screen (no region selected)")
             )
             .size(13),
+            Space::new().width(12),
+            button("Full Screen")
+                .padding([8, 16])
+                .style(secondary_button_style())
+                .on_press(Message::FullScreen),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -152,12 +157,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(10)
     .padding(24);
 
-    if let Some(warn) = wf_warning {
-        layout = layout.push(warn);
+    if let Some(w) = wf_warning {
+        layout = layout.push(w);
     }
 
     container(layout)
-        .width(Length::Fill)
-        .height(Length::Fill)
+        .width(Length::Shrink)
+        .height(Length::Shrink)
         .into()
 }

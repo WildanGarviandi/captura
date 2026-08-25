@@ -15,6 +15,7 @@ pub enum Message {
     SelectRegion,
     RegionSelected(Result<String, String>),
     ToggleRecording,
+    FullScreen,
     InstallSlurp,
     SlurpInstalled(Result<(), String>),
     /// Fired every ~500ms by a subscription to check if the notification
