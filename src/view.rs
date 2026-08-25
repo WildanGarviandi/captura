@@ -2,9 +2,11 @@
 
 use crate::codec::Codec;
 use crate::format::Format;
+use crate::icons::{RecordIcon, RegionIcon, WarningIcon};
 use crate::message::Message;
 use crate::model::{App, FPS_OPTIONS};
-use iced::widget::{button, column, container, pick_list, row, rule, text, text_input, Space};
+use crate::styles::{record_button_style, secondary_button_style, warning_button_style};
+use iced::widget::{Canvas, Space, button, column, container, pick_list, row, rule, text, text_input};
 use iced::{Alignment, Element, Length};
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -46,19 +48,38 @@ pub fn view(app: &App) -> Element<'_, Message> {
         pick_list(Codec::ALL, Some(app.codec.clone()), Message::CodecSelected).width(150),
         Space::new().width(12),
         text("Format:"),
-        pick_list(Format::ALL, Some(app.format.clone()), Message::FormatSelected).width(130),
+        pick_list(
+            Format::ALL,
+            Some(app.format.clone()),
+            Message::FormatSelected
+        )
+        .width(130),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
     let region_row: Element<Message> = if app.slurp_installed {
+        let icon = Canvas::new(RegionIcon {
+            selected: app.region.is_some(),
+        })
+        .width(16)
+        .height(16);
+
         let btn_label = if app.region.is_some() {
-            "↺ Re-select Region"
+            "Re-select Region"
         } else {
-            "⬚ Select Region"
+            "Select Region"
         };
+
         row![
-            button(btn_label).on_press(Message::SelectRegion),
+            button(
+                row![icon, text(btn_label)]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+            )
+            .padding([8, 16])
+            .style(secondary_button_style())
+            .on_press(Message::SelectRegion),
             Space::new().width(8),
             text(
                 app.region
@@ -71,20 +92,47 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .align_y(Alignment::Center)
         .into()
     } else {
+        let icon = Canvas::new(WarningIcon).width(16).height(16);
+
         row![
-            text("⚠  slurp not found — region selection unavailable").size(13),
+            row![
+                icon,
+                text("slurp not found — region selection unavailable").size(13)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
             Space::new().width(12),
-            button("Install slurp").on_press(Message::InstallSlurp),
+            button("Install slurp")
+                .padding([8, 16])
+                .style(warning_button_style())
+                .on_press(Message::InstallSlurp),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
         .into()
     };
 
-    let record_btn = if app.is_recording {
-        button("■  Stop Recording").on_press(Message::ToggleRecording)
-    } else {
-        button("⏺  Start Recording").on_press(Message::ToggleRecording)
+    let record_btn = {
+        let icon = Canvas::new(RecordIcon {
+            is_recording: app.is_recording,
+        })
+        .width(16)
+        .height(16);
+
+        let label = if app.is_recording {
+            "Stop Recording"
+        } else {
+            "Start Recording"
+        };
+
+        button(
+            row![icon, text(label)]
+                .spacing(10)
+                .align_y(Alignment::Center),
+        )
+        .padding([10, 20])
+        .style(record_button_style(app.is_recording))
+        .on_press(Message::ToggleRecording)
     };
 
     let mut layout = column![

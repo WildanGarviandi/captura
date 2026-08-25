@@ -43,7 +43,7 @@ pub fn output_path(dir: &str, name: &str, format: &Format) -> String {
 /// Spawn the `wf-recorder` process and a notification that can stop it.
 pub fn start(output_dir: &str, filename: &str, format: &Format, fps: u32, codec: &Codec, region: &Option<String>) -> Result<RecordingStarted, String> {
     let path = output_path(output_dir, filename, format);
-    let mut cmd = recording_command(&path, fps, codec, region);
+    let mut cmd = recording_command(path, fps, codec, region);
 
     let child = cmd
         .spawn()
