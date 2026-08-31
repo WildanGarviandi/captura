@@ -162,3 +162,107 @@ fn stop_recording(app: &mut App) {
     app.is_recording = false;
     app.notification_stop_flag = None;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        App {
+            fps: 30,
+            output_dir: "/tmp".to_string(),
+            filename: "recording".to_string(),
+            codec: Codec::H264,
+            format: Format::MP4,
+            region: None,
+            is_recording: false,
+            slurp_installed: false,
+            wf_recorder_installed: false,
+            recording_process: None,
+            status: "Ready".to_string(),
+            notification_stop_flag: None,
+        }
+    }
+
+    fn apply(app: &mut App, message: Message) {
+        let _ = update(app, message);
+    }
+
+    #[test]
+    fn updates_recording_settings() {
+        let mut app = app();
+
+        apply(&mut app, Message::FpsSelected(60));
+        apply(
+            &mut app,
+            Message::OutputDirChanged("/home/user/Videos".to_string()),
+        );
+        apply(&mut app, Message::FilenameChanged("demo".to_string()));
+        apply(&mut app, Message::DirSelected(None));
+        apply(
+            &mut app,
+            Message::DirSelected(Some("/mnt/recordings".to_string())),
+        );
+        apply(&mut app, Message::FormatSelected(Format::MKV));
+
+        assert_eq!(app.fps, 60);
+        assert_eq!(app.output_dir, "/mnt/recordings");
+        assert_eq!(app.filename, "demo");
+        assert_eq!(app.format, Format::MKV);
+    }
+
+    #[test]
+    fn selects_compatible_format_for_codec() {
+        let mut app = app();
+
+        apply(&mut app, Message::CodecSelected(Codec::VP9));
+        assert_eq!(app.codec, Codec::VP9);
+        assert_eq!(app.format, Format::WebM);
+
+        apply(&mut app, Message::CodecSelected(Codec::H265));
+        assert_eq!(app.codec, Codec::H265);
+        assert_eq!(app.format, Format::MKV);
+
+        apply(&mut app, Message::CodecSelected(Codec::AV1));
+        assert_eq!(app.codec, Codec::AV1);
+        assert_eq!(app.format, Format::MKV);
+    }
+
+    #[test]
+    fn records_region_selection_outcomes() {
+        let mut app = app();
+
+        apply(
+            &mut app,
+            Message::RegionSelected(Ok("100,200 800x600".to_string())),
+        );
+        assert_eq!(app.region.as_deref(), Some("100,200 800x600"));
+        assert_eq!(app.status, "Region: 100,200 800x600");
+
+        apply(&mut app, Message::RegionSelected(Ok(String::new())));
+        assert_eq!(app.region.as_deref(), Some("100,200 800x600"));
+        assert_eq!(app.status, "Region selection cancelled");
+
+        apply(
+            &mut app,
+            Message::RegionSelected(Err("slurp unavailable".to_string())),
+        );
+        assert_eq!(app.status, "slurp error: slurp unavailable");
+    }
+
+    #[test]
+    fn reports_slurp_installation_result() {
+        let mut app = app();
+
+        apply(&mut app, Message::SlurpInstalled(Ok(())));
+        assert!(app.slurp_installed);
+        assert_eq!(app.status, "slurp installed successfully!");
+
+        apply(
+            &mut app,
+            Message::SlurpInstalled(Err("permission denied".to_string())),
+        );
+        assert!(app.slurp_installed);
+        assert_eq!(app.status, "Install failed: permission denied");
+    }
+}

@@ -97,3 +97,20 @@ pub fn stop_process(mut child: Child) {
         let _ = child.wait();
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_path_uses_selected_directory_filename_and_format() {
+        assert_eq!(
+            output_path("/home/user/Videos", "capture", &Format::MP4),
+            "/home/user/Videos/capture.mp4"
+        );
+        assert_eq!(
+            output_path("/tmp", "screen", &Format::WebM),
+            "/tmp/screen.webm"
+        );
+    }
+}
