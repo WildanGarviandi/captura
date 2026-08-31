@@ -37,3 +37,26 @@ impl Codec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display_implementation() {
+        assert_eq!(format!("{}", Codec::H264), "H.264");
+        assert_eq!(format!("{}", Codec::H265), "H.265 / HEVC");
+        assert_eq!(format!("{}", Codec::VP8), "VP8");
+        assert_eq!(format!("{}", Codec::VP9), "VP9");
+        assert_eq!(format!("{}", Codec::AV1), "AV1");
+    }
+
+    #[test]
+    fn test_wf_arg() {
+        assert_eq!(Codec::H264.wf_arg(), "libx264");
+        assert_eq!(Codec::H265.wf_arg(), "libx265");
+        assert_eq!(Codec::VP8.wf_arg(), "libvpx");
+        assert_eq!(Codec::VP9.wf_arg(), "libvpx-vp9");
+        assert_eq!(Codec::AV1.wf_arg(), "libaom-av1");
+    }
+}

@@ -31,3 +31,30 @@ impl Format {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display() {
+        assert_eq!(format!("{}", Format::MP4), "MP4  (.mp4)");
+        assert_eq!(format!("{}", Format::MKV), "MKV  (.mkv)");
+        assert_eq!(format!("{}", Format::WebM), "WebM (.webm)");
+    }
+
+    #[test]
+    fn test_all() {
+        assert_eq!(Format::ALL.len(), 3);
+        assert!(Format::ALL.contains(&Format::MP4));
+        assert!(Format::ALL.contains(&Format::MKV));
+        assert!(Format::ALL.contains(&Format::WebM));
+    }
+
+    #[test]
+    fn test_ext() {
+        assert_eq!(Format::MP4.ext(), "mp4");
+        assert_eq!(Format::MKV.ext(), "mkv");
+        assert_eq!(Format::WebM.ext(), "webm");
+    }
+}
