@@ -1,0 +1,52 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: ["master"]
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (debug)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  release-and-merge:
+    name: Build release and merge
+    if: github.event.action == 'labeled' && github.event.label.name == 'merge'
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+    - name: Build release
+      run: cargo build --release --verbose
+    - name: Enable rebase auto-merge
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+      run: gh pr merge "$PR_URL" --auto --rebase --delete-branch
